@@ -1,23 +1,23 @@
 package com.samapps310.ocr;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.v4.content.FileProvider;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageView;
-import android.widget.TextView;
+import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import java.io.File;
@@ -28,14 +28,17 @@ import java.io.OutputStream;
 
 public class MainActivity extends AppCompatActivity {
 
-    private ProgressDialog p;
     private ImageView imageHolder;
+    private ProgressBar progressBar;
+    private Button scanBtn;
 
-    private String res = null;
     private boolean executionFinished = false;
+    private File file = null;
+    private Bitmap bitmap = null;
 
     private static final int READ_REQUEST_CODE = 42;
     private static final int REQUEST_IMAGE_CAPTURE = 1;
+    private static final String TAG = MainActivity.class.getSimpleName();
     public static MainActivity instance = null;
 
     @Override
@@ -44,20 +47,25 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         instance = this;
         imageHolder = findViewById(R.id.imageHolder);
+        progressBar = findViewById(R.id.pb_har);
+        scanBtn = findViewById(R.id.show_result);
     }
 
     /**
      * Method used to capture image from inbuilt camera.
-     * "executionFinished" is true if the "eng.traineddata" file from
-     * the assets folder is copied to internal storage.
      * @param view
      */
     public void captureImage(View view) {
+        if (file != null && file.exists()){
+            file.delete();
+            file = null;
+        }
         if (executionFinished){
-            Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-            if (takePictureIntent.resolveActivity(instance.getPackageManager()) != null) {
-                startActivityForResult(takePictureIntent, REQUEST_IMAGE_CAPTURE);
-            }
+            Intent m_intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            file = new File(Environment.getExternalStorageDirectory(), System.currentTimeMillis()+"scan.jpg");
+            Uri uri = FileProvider.getUriForFile(this, this.getApplicationContext().getPackageName() + ".provider", file);
+            m_intent.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri);
+            startActivityForResult(m_intent, REQUEST_IMAGE_CAPTURE);
         }
         else {
             initiateExecution();
@@ -66,8 +74,6 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Method used to load image from storage.
-     * "executionFinished" is true if the "eng.traineddata" file from
-     * the assets folder is copied to internal storage.
      * @param view
      */
     public void loadImage(View view) {
@@ -83,21 +89,60 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * This method gets the actual text data from the bitmap image,
-     * using ORCHelper class.
-     * @param bitmap
+     * Perform ocr opperation
+     * @param view
      */
-    private void processImage(Bitmap bitmap){
-        OCRHelper orc = new OCRHelper();
-        res = orc.recognizeText(bitmap);
+    public void scanImage(View view) {
+        if (bitmap != null){
+            performOCR  performOCR = new performOCR();
+            performOCR.execute(bitmap);
+        }
+        else {
+            Toast.makeText(instance, "Load an image first", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!executionFinished){
+            initiateExecution();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (file != null && file.exists()){
+            file.delete();
+            file = null;
+        }
     }
 
     /**
-     * After retrieving the text data from the image, the result is
-     * displayed in a dialog box.
-     * @param view
+     * This method is called if the trained data is not loaded (copied to external storage)
      */
-    public void displayResult(View view) {
+    private void initiateExecution(){
+        LoadTrainedData task = new LoadTrainedData();
+        task.execute();
+    }
+
+    /**
+     * Method to get Bitmap from Uri
+     * @param uri
+     * @return
+     */
+    private Bitmap getBitmap(Uri uri){
+        Bitmap bitmap = null;
+        try {
+            bitmap = MediaStore.Images.Media.getBitmap(instance.getContentResolver(), uri);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return bitmap;
+    }
+
+    private void showResultDialog(String res){
         if (!TextUtils.isEmpty(res)){
             new AlertDialog.Builder(instance)
                     .setTitle("Result")
@@ -110,50 +155,20 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * coping "eng.traineddata" file from the assets folder to internal storage.
-     * the trained data files must be copied to the Android device in a subdirectory named tessdata.
-     */
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (!executionFinished){
-            initiateExecution();
-        }
-    }
-
-    private void initiateExecution(){
-        AsyncTaskExample task = new AsyncTaskExample();
-        task.execute();
-    }
-
-    /**
-     * The image is displayed in the imageHolder view, and processImage() method is called
-     * if the resultcode matches.
-     * @param requestCode
-     * @param resultCode
-     * @param data
-     */
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == Activity.RESULT_OK) {
-            Bundle extras = data.getExtras();
-            Bitmap imageBitmap = (Bitmap) extras.get("data");
-            imageHolder.setImageBitmap(imageBitmap);
-            processImage(imageBitmap);
+            Uri uri = FileProvider.getUriForFile(this, this.getApplicationContext().getPackageName() + ".provider", file);
+            imageHolder.setImageURI(uri);
+            this.bitmap = getBitmap(uri);
         }
         if (requestCode == READ_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
             Uri uri = null;
             if (data != null) {
                 uri = data.getData();
                 imageHolder.setImageURI(uri);
-                try {
-                    Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), uri);
-                    processImage(bitmap);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                this.bitmap = getBitmap(uri);
             }
         }
     }
@@ -179,15 +194,11 @@ public class MainActivity extends AppCompatActivity {
     /**
      * Copies trained data files from assets folder to external storage.
      */
-    private class AsyncTaskExample extends AsyncTask<String, String, String> {
+    private class LoadTrainedData extends AsyncTask<String, Uri, String> {
         @Override
         protected void onPreExecute() {
             super.onPreExecute();
-            p = new ProgressDialog(MainActivity.this);
-            p.setMessage("Please wait...");
-            p.setIndeterminate(false);
-            p.setCancelable(false);
-            p.show();
+            progressBar.setVisibility(View.VISIBLE);
         }
 
         @Override
@@ -234,12 +245,44 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPostExecute(String msg) {
             super.onPostExecute(msg);
+            progressBar.setVisibility(View.INVISIBLE);
             if (msg.equals("done")) {
-                p.hide();
                 executionFinished = true;
             } else {
-                p.hide();
                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    /**
+     * Text recognition process
+     */
+    private class performOCR extends AsyncTask<Bitmap, String, String> {
+
+        @Override
+        protected void onPreExecute() {
+            super.onPreExecute();
+            progressBar.setVisibility(View.VISIBLE);
+            scanBtn.setEnabled(false);
+        }
+
+        @Override
+        protected String doInBackground(Bitmap... bitmap) {
+            OCRHelper orc = new OCRHelper();
+            String res = orc.recognizeText(bitmap[0]);
+            return res;
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+            super.onPostExecute(result);
+            progressBar.setVisibility(View.INVISIBLE);
+            scanBtn.setEnabled(true);
+            if (TextUtils.isEmpty(result)){
+                Toast.makeText(MainActivity.this, "Result empty", Toast.LENGTH_SHORT).show();
+            }
+            else {
+                showResultDialog(result);
             }
         }
     }
